@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 import crypto from "crypto";
 
 const app = express();
-app.use(express.json());
+app.use("/ui", express.static("public"));
 
 // In-memory storage (Demo)
 const agents = new Map();               // agentId -> agent

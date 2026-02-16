@@ -1,0 +1,14 @@
+body { font-family: system-ui, Arial; margin: 0; background:#f6f7fb; }
+header { padding: 16px; background: white; border-bottom: 1px solid #ddd; }
+h1 { margin: 0 0 10px 0; font-size: 20px; }
+.row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+input, select, button { padding: 8px; }
+button { cursor:pointer; }
+.grid { display:grid; grid-template-columns: 1fr 2fr; gap: 16px; padding: 16px; }
+.card { background:white; border:1px solid #ddd; border-radius: 10px; padding: 12px; }
+.agent { padding: 8px; border:1px solid #eee; border-radius:8px; margin:6px 0; cursor:pointer; }
+.agent:hover { background:#f2f4ff; }
+.badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; border:1px solid #ccc; }
+.badge.online { background:#eaffea; border-color:#8bd48b; }
+.badge.offline { background:#ffecec; border-color:#e59a9a; }
+pre { background:#0b1020; color:#cfe3ff; padding:10px; border-radius:10px; overflow:auto; }

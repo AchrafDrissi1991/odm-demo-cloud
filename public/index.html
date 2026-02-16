@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ODM Demo UI</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header>
+    <h1>ODM Demo UI</h1>
+    <div class="row">
+      <label>Tenant:</label>
+      <input id="tenant" value="hilscher-demo" />
+      <button id="refresh">Refresh</button>
+      <span id="status"></span>
+    </div>
+  </header>
+
+  <main class="grid">
+    <section class="card">
+      <h2>Agents</h2>
+      <div id="agents"></div>
+    </section>
+
+    <section class="card">
+      <h2>Agent Details</h2>
+      <div id="agentDetails">Select an agent…</div>
+      <h3>Devices</h3>
+      <div id="devices"></div>
+
+      <h3>Firmware Update</h3>
+      <div class="row">
+        <label>Device:</label>
+        <select id="deviceSelect"></select>
+      </div>
+      <div class="row">
+        <label>ArtifactId:</label>
+        <input id="artifactId" value="fw-netx90-re-1.0.1.bin" />
+      </div>
+      <button id="startJob" disabled>Start Firmware Update</button>
+
+      <h3>Job Status</h3>
+      <pre id="job"></pre>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
