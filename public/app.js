@@ -130,6 +130,37 @@ async function pollJob(jobId) {
   jobPollTimer = setInterval(tick, 1000);
 }
 
+async function pairAgentFromUi() {
+  const tenantId = $("tenant").value.trim();
+  const pairingCode = $("pairingCode").value.trim();
+  const displayName = $("pairName").value.trim();
+  const siteId = $("pairSite").value.trim();
+
+  if (!pairingCode) {
+    setStatus("enter pairing code");
+    return;
+  }
+
+  setStatus("pairing...");
+  try {
+    await api(`/portal/agents/pair`, {
+      method: "POST",
+      body: JSON.stringify({
+        pairingCode,
+        tenantId,
+        userId: "achraf", // später aus Login/JWT
+        displayName,
+        siteId
+      })
+    });
+    setStatus("paired ✅");
+    $("pairingCode").value = "";
+    await refreshAgents();
+  } catch (e) {
+    setStatus("pair failed: " + e.message);
+  }
+}
+
 $("refresh").onclick = refreshAgents;
 $("startJob").onclick = startFirmwareJob;
 
