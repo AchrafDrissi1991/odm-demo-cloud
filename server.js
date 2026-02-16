@@ -7,7 +7,7 @@ app.use(express.json());
 app.use("/ui", express.static("public"));
 
 // ---------- Online detection (TTL) ----------
-const ONLINE_TTL_MS = 15_000; // 15s: if no heartbeat/devices/job progress within 15s => offline
+const ONLINE_TTL_MS = 15_000;
 function isOnline(agent) {
   if (!agent?.lastSeenAt) return false;
   const ageMs = Date.now() - Date.parse(agent.lastSeenAt);
@@ -25,7 +25,6 @@ const agentJobQueue = new Map();   // agentId -> [jobId]
 function nowIso() { return new Date().toISOString(); }
 
 function makePairingCode() {
-  // nanoid kann '-' enthalten; fürs Demo ok
   const a = nanoid(4).toUpperCase();
   const b = nanoid(4).toUpperCase();
   return `${a}-${b}`;
@@ -36,43 +35,80 @@ function ensureQueue(agentId) {
   return agentJobQueue.get(agentId);
 }
 
+function ensureAgent(agentId, { agentVersion, machineInfo } = {}) {
+  // Create agent if missing
+  if (!agents.has(agentId)) {
+    agents.set(agentId, {
+      agentId,
+      tenantId: null,
+      displayName: machineInfo?.hostname ?? "unpaired-agent",
+      siteId: null,
+      paired: false,
+      lastSeenAt: null,
+      agentVersion: agentVersion ?? "unknown",
+      capabilities: {},
+      createdAt: nowIso(),
+      pairedAt: null,
+      pairedBy: null
+    });
+  }
+  return agents.get(agentId);
+}
+
 // ---------- Health ----------
 app.get("/health", (_req, res) => res.json({ ok: true, time: nowIso() }));
 
 /* ==================== AGENT API ==================== */
 
-// Pairing start (agent generates code)
-app.post("/agent/pairing/start", (req, res) => {
-  const { agentVersion, machineInfo } = req.body ?? {};
+/**
+ * Register / re-use agent identity
+ * Body: { agentId?: string, agentVersion?: string, machineInfo?: { hostname, os, arch } }
+ * If agentId exists on server => reuse
+ * Else => create new agentId
+ */
+app.post("/agent/register", (req, res) => {
+  const { agentId: providedId, agentVersion, machineInfo } = req.body ?? {};
+  const agentId = (providedId && typeof providedId === "string") ? providedId : crypto.randomUUID();
 
-  const agentId = crypto.randomUUID();
-  const pairingCode = makePairingCode();
-  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+  const a = ensureAgent(agentId, { agentVersion, machineInfo });
+  // registration also counts as alive
+  a.lastSeenAt = nowIso();
+  a.agentVersion = agentVersion ?? a.agentVersion;
+  agents.set(agentId, a);
 
-  agents.set(agentId, {
+  res.json({
+    ok: true,
     agentId,
-    tenantId: null,
-    displayName: machineInfo?.hostname ?? "unpaired-agent",
-    siteId: null,
-    paired: false,
-    lastSeenAt: null,
-    agentVersion: agentVersion ?? "unknown",
-    capabilities: {},
-    createdAt: nowIso(),
-    pairedAt: null,
-    pairedBy: null
+    paired: a.paired,
+    tenantId: a.tenantId,
+    displayName: a.displayName
   });
+});
+
+/**
+ * Generate pairing code for existing agentId (does NOT create new agentId)
+ * Body: { agentId }
+ */
+app.post("/agent/pairing/code", (req, res) => {
+  const { agentId } = req.body ?? {};
+  if (!agentId || !agents.has(agentId)) {
+    return res.status(400).json({ ok: false, error: "UNKNOWN_AGENT" });
+  }
+
+  const pairingCode = makePairingCode();
+  const expiresAt = Date.now() + 10 * 60 * 1000;
 
   pairingSessions.set(pairingCode, { agentId, expiresAt, usedAt: null });
 
   res.json({
+    ok: true,
     agentId,
     pairingCode,
     expiresAt: new Date(expiresAt).toISOString()
   });
 });
 
-// Heartbeat: NEVER block this (heartbeat makes agent online)
+// Heartbeat (never block)
 app.post("/agent/heartbeat", (req, res) => {
   const { agentId, agentVersion, capabilities } = req.body ?? {};
   if (!agentId || !agents.has(agentId)) {
@@ -88,7 +124,7 @@ app.post("/agent/heartbeat", (req, res) => {
   res.json({ ok: true, serverTime: nowIso() });
 });
 
-// Devices report: counts as "seen" too
+// Devices report
 app.post("/agent/devices/report", (req, res) => {
   const { agentId, devices } = req.body ?? {};
   if (!agentId || !agents.has(agentId)) return res.status(400).json({ ok: false, error: "UNKNOWN_AGENT" });
@@ -116,9 +152,14 @@ app.get("/agent/jobs/next", (req, res) => {
   if (!agentId || !agents.has(agentId)) return res.status(400).json({ ok: false, error: "UNKNOWN_AGENT" });
 
   const queue = ensureQueue(agentId);
-  if (queue.length === 0) return res.json({ ok: true, jobs: [] });
+  if (queue.length === 0) {
+    // still counts as alive
+    const a = agents.get(agentId);
+    a.lastSeenAt = nowIso();
+    agents.set(agentId, a);
+    return res.json({ ok: true, jobs: [] });
+  }
 
-  // deliver up to N jobs
   const N = 3;
   const jobIds = queue.splice(0, N);
 
@@ -133,7 +174,6 @@ app.get("/agent/jobs/next", (req, res) => {
       payload: j.payload
     }));
 
-  // pulling jobs also implies agent is alive
   const a = agents.get(agentId);
   a.lastSeenAt = nowIso();
   agents.set(agentId, a);
@@ -151,7 +191,7 @@ app.post("/agent/jobs/:jobId/progress", (req, res) => {
 
   if (agentId && j.agentId !== agentId) return res.status(403).json({ ok: false, error: "AGENT_MISMATCH" });
 
-  if (status) j.status = status; // queued/running/succeeded/failed
+  if (status) j.status = status;
   if (typeof progress === "number") j.progress = Math.max(0, Math.min(100, progress));
   if (message) j.message = message;
 
@@ -161,7 +201,6 @@ app.post("/agent/jobs/:jobId/progress", (req, res) => {
   j.updatedAt = nowIso();
   jobs.set(jobId, j);
 
-  // progress also implies agent is alive
   if (agentId && agents.has(agentId)) {
     const a = agents.get(agentId);
     a.lastSeenAt = nowIso();
@@ -171,9 +210,9 @@ app.post("/agent/jobs/:jobId/progress", (req, res) => {
   res.json({ ok: true });
 });
 
-/* ==================== PORTAL API (UI) ==================== */
+/* ==================== PORTAL API ==================== */
 
-// Pair (claim agent)
+// Pair (claim agent) by code
 app.post("/portal/agents/pair", (req, res) => {
   const { pairingCode, tenantId, userId, displayName, siteId } = req.body ?? {};
   if (!pairingCode) return res.status(400).json({ ok: false, error: "MISSING_PAIRING_CODE" });
@@ -190,15 +229,15 @@ app.post("/portal/agents/pair", (req, res) => {
   agent.paired = true;
   agent.pairedBy = userId ?? "demo-user";
   agent.pairedAt = nowIso();
-
   agents.set(agent.agentId, agent);
+
   session.usedAt = nowIso();
   pairingSessions.set(pairingCode, session);
 
   res.json({ ok: true, agentId: agent.agentId, status: "paired" });
 });
 
-// List agents (online derived from lastSeenAt)
+// List agents (online derived)
 app.get("/portal/agents", (req, res) => {
   const { tenantId } = req.query;
 
@@ -225,7 +264,7 @@ app.get("/portal/agents/:agentId/devices", (req, res) => {
   res.json(agentDevices.get(agentId) ?? []);
 });
 
-// Create firmware update job (BLOCK if agent offline)
+// Create firmware update job (block if offline)
 app.post("/portal/agents/:agentId/jobs/firmware-update", (req, res) => {
   const { agentId } = req.params;
   const { deviceId, artifactId } = req.body ?? {};
@@ -233,9 +272,7 @@ app.post("/portal/agents/:agentId/jobs/firmware-update", (req, res) => {
   if (!agents.has(agentId)) return res.status(404).json({ ok: false, error: "UNKNOWN_AGENT" });
 
   const agent = agents.get(agentId);
-  if (!isOnline(agent)) {
-    return res.status(409).json({ ok: false, error: "AGENT_OFFLINE" });
-  }
+  if (!isOnline(agent)) return res.status(409).json({ ok: false, error: "AGENT_OFFLINE" });
 
   if (!deviceId) return res.status(400).json({ ok: false, error: "MISSING_DEVICE_ID" });
   if (!artifactId) return res.status(400).json({ ok: false, error: "MISSING_ARTIFACT_ID" });
@@ -269,6 +306,6 @@ app.get("/portal/jobs/:jobId", (req, res) => {
   res.json(jobs.get(jobId));
 });
 
-// ---------- Start server ----------
+// Start server
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`Cloud server listening on port ${port}`));
