@@ -1,19 +1,21 @@
+// server.js
 import express from "express";
 import { nanoid } from "nanoid";
+import crypto from "crypto";
 
 const app = express();
 app.use(express.json());
 
-// In-memory storage (für Demo). Später: DB.
+// In-memory storage (Demo)
 const agents = new Map(); // agentId -> agent
 const pairingSessions = new Map(); // pairingCode -> { agentId, expiresAt, usedAt }
+const agentDevices = new Map(); // agentId -> [devices]
 
+// Helpers
 function nowIso() {
   return new Date().toISOString();
 }
-
 function makePairingCode() {
-  // z.B. "8K7Q-2M9D"
   const a = nanoid(4).toUpperCase();
   const b = nanoid(4).toUpperCase();
   return `${a}-${b}`;
@@ -37,7 +39,7 @@ app.post("/agent/pairing/start", (req, res) => {
 
   agents.set(agentId, {
     agentId,
-    tenantId: null, // wird beim Pairing gesetzt
+    tenantId: null,
     displayName: machineInfo?.hostname ?? "unpaired-agent",
     siteId: null,
     status: "unpaired",
@@ -82,9 +84,39 @@ app.post("/agent/heartbeat", (req, res) => {
 });
 
 /**
- * PORTAL API (User-Action)
+ * AGENT API
+ * Agent reports its device list
+ * Body: { agentId, devices: [ { deviceId, serialNumber, model, fwVersion, status } ] }
+ */
+app.post("/agent/devices/report", (req, res) => {
+  const { agentId, devices } = req.body ?? {};
+  if (!agentId || !agents.has(agentId)) {
+    return res.status(400).json({ ok: false, error: "UNKNOWN_AGENT" });
+  }
+  if (!Array.isArray(devices)) {
+    return res.status(400).json({ ok: false, error: "MISSING_DEVICES" });
+  }
+
+  agentDevices.set(agentId, devices.map(d => ({
+    deviceId: d.deviceId ?? crypto.randomUUID(),
+    serialNumber: d.serialNumber ?? null,
+    model: d.model ?? "unknown",
+    fwVersion: d.fwVersion ?? null,
+    status: d.status ?? "unknown",
+    reportedAt: nowIso()
+  })));
+
+  // update last seen too
+  const a = agents.get(agentId);
+  a.lastSeenAt = nowIso();
+  agents.set(agentId, a);
+
+  res.json({ ok: true, count: agentDevices.get(agentId).length });
+});
+
+/**
+ * PORTAL API
  * User "claimt" Agent über pairingCode
- * Für Demo: tenantId/userId kommen einfach aus Body (später aus JWT)
  */
 app.post("/portal/agents/pair", (req, res) => {
   const { pairingCode, tenantId, userId, displayName, siteId } = req.body ?? {};
@@ -112,7 +144,7 @@ app.post("/portal/agents/pair", (req, res) => {
 
 /**
  * PORTAL API
- * Liste Agents (für Demo: optional nach tenantId filtern)
+ * Liste Agents (optional filter by tenantId)
  */
 app.get("/portal/agents", (req, res) => {
   const { tenantId } = req.query;
@@ -130,7 +162,20 @@ app.get("/portal/agents", (req, res) => {
   res.json(list);
 });
 
-// Render setzt PORT automatisch
+/**
+ * PORTAL API
+ * Get devices for an agent
+ */
+app.get("/portal/agents/:agentId/devices", (req, res) => {
+  const { agentId } = req.params;
+  if (!agentId || !agents.has(agentId)) {
+    return res.status(404).json({ ok: false, error: "UNKNOWN_AGENT" });
+  }
+  const list = agentDevices.get(agentId) ?? [];
+  res.json(list);
+});
+
+// Start server
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`Cloud server listening on port ${port}`);
