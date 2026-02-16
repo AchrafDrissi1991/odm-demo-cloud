@@ -36,7 +36,6 @@ function ensureQueue(agentId) {
 }
 
 function ensureAgent(agentId, { agentVersion, machineInfo } = {}) {
-  // Create agent if missing
   if (!agents.has(agentId)) {
     agents.set(agentId, {
       agentId,
@@ -60,18 +59,12 @@ app.get("/health", (_req, res) => res.json({ ok: true, time: nowIso() }));
 
 /* ==================== AGENT API ==================== */
 
-/**
- * Register / re-use agent identity
- * Body: { agentId?: string, agentVersion?: string, machineInfo?: { hostname, os, arch } }
- * If agentId exists on server => reuse
- * Else => create new agentId
- */
+// Register / re-use agent identity
 app.post("/agent/register", (req, res) => {
   const { agentId: providedId, agentVersion, machineInfo } = req.body ?? {};
   const agentId = (providedId && typeof providedId === "string") ? providedId : crypto.randomUUID();
 
   const a = ensureAgent(agentId, { agentVersion, machineInfo });
-  // registration also counts as alive
   a.lastSeenAt = nowIso();
   a.agentVersion = agentVersion ?? a.agentVersion;
   agents.set(agentId, a);
@@ -81,14 +74,12 @@ app.post("/agent/register", (req, res) => {
     agentId,
     paired: a.paired,
     tenantId: a.tenantId,
-    displayName: a.displayName
+    displayName: a.displayName,
+    siteId: a.siteId
   });
 });
 
-/**
- * Generate pairing code for existing agentId (does NOT create new agentId)
- * Body: { agentId }
- */
+// Agent requests pairing code for existing agentId
 app.post("/agent/pairing/code", (req, res) => {
   const { agentId } = req.body ?? {};
   if (!agentId || !agents.has(agentId)) {
@@ -108,7 +99,7 @@ app.post("/agent/pairing/code", (req, res) => {
   });
 });
 
-// Heartbeat (never block)
+// Heartbeat
 app.post("/agent/heartbeat", (req, res) => {
   const { agentId, agentVersion, capabilities } = req.body ?? {};
   if (!agentId || !agents.has(agentId)) {
@@ -153,7 +144,6 @@ app.get("/agent/jobs/next", (req, res) => {
 
   const queue = ensureQueue(agentId);
   if (queue.length === 0) {
-    // still counts as alive
     const a = agents.get(agentId);
     a.lastSeenAt = nowIso();
     agents.set(agentId, a);
@@ -237,6 +227,37 @@ app.post("/portal/agents/pair", (req, res) => {
   res.json({ ok: true, agentId: agent.agentId, status: "paired" });
 });
 
+// NEW: Unpair agent (remove tenant ownership)
+app.post("/portal/agents/:agentId/unpair", (req, res) => {
+  const { agentId } = req.params;
+  if (!agentId || !agents.has(agentId)) return res.status(404).json({ ok: false, error: "UNKNOWN_AGENT" });
+
+  const a = agents.get(agentId);
+  a.paired = false;
+  a.tenantId = null;
+  a.siteId = null;
+  a.pairedAt = null;
+  a.pairedBy = null;
+  agents.set(agentId, a);
+
+  // Optional: clear job queue to avoid executing old jobs after re-pair
+  agentJobQueue.set(agentId, []);
+
+  res.json({ ok: true, agentId, status: "unpaired" });
+});
+
+// NEW: Generate new pairing code for an existing agent (usually after unpair)
+app.post("/portal/agents/:agentId/pairing-code", (req, res) => {
+  const { agentId } = req.params;
+  if (!agentId || !agents.has(agentId)) return res.status(404).json({ ok: false, error: "UNKNOWN_AGENT" });
+
+  const pairingCode = makePairingCode();
+  const expiresAt = Date.now() + 10 * 60 * 1000;
+  pairingSessions.set(pairingCode, { agentId, expiresAt, usedAt: null });
+
+  res.json({ ok: true, agentId, pairingCode, expiresAt: new Date(expiresAt).toISOString() });
+});
+
 // List agents (online derived)
 app.get("/portal/agents", (req, res) => {
   const { tenantId } = req.query;
@@ -264,7 +285,7 @@ app.get("/portal/agents/:agentId/devices", (req, res) => {
   res.json(agentDevices.get(agentId) ?? []);
 });
 
-// Create firmware update job (block if offline)
+// Create firmware update job (block if agent offline)
 app.post("/portal/agents/:agentId/jobs/firmware-update", (req, res) => {
   const { agentId } = req.params;
   const { deviceId, artifactId } = req.body ?? {};

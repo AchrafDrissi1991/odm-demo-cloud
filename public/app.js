@@ -1,6 +1,7 @@
 // public/app.js
 const $ = (id) => document.getElementById(id);
-
+$("genCode").disabled = false;
+$("unpair").disabled = false;
 let selectedAgentId = null;
 let jobPollTimer = null;
 let lastAgents = []; // cache of last agent list
@@ -202,7 +203,37 @@ async function pollJob(jobId) {
   await tick();
   jobPollTimer = setInterval(tick, 1000);
 }
+async function unpairSelectedAgent() {
+  if (!selectedAgentId) return;
+  setStatus("unpairing...");
+  try {
+    await api(`/portal/agents/${selectedAgentId}/unpair`, { method: "POST" });
+    $("pairInfo").textContent = "";
+    setStatus("unpaired ✅");
+    selectedAgentId = null;
+    $("agentDetails").textContent = "Select an agent…";
+    $("devices").innerHTML = "";
+    $("deviceSelect").innerHTML = "";
+    $("startJob").disabled = true;
+    $("genCode").disabled = true;
+    $("unpair").disabled = true;
+    await refreshAgents();
+  } catch (e) {
+    setStatus("unpair failed: " + e.message);
+  }
+}
 
+async function generatePairingCodeForSelectedAgent() {
+  if (!selectedAgentId) return;
+  setStatus("generating code...");
+  try {
+    const res = await api(`/portal/agents/${selectedAgentId}/pairing-code`, { method: "POST" });
+    $("pairInfo").textContent = `Pairing Code: ${res.pairingCode}\nExpires: ${res.expiresAt}`;
+    setStatus("pairing code generated ✅");
+  } catch (e) {
+    setStatus("code gen failed: " + e.message);
+  }
+}
 async function pairAgentFromUi() {
   const tenantId = $("tenant").value.trim();
   const pairingCode = $("pairingCode").value.trim();
@@ -239,7 +270,8 @@ async function pairAgentFromUi() {
 $("refresh").onclick = () => refreshAgents().catch(e => setStatus(String(e)));
 $("startJob").onclick = startFirmwareJob;
 $("pairBtn").onclick = pairAgentFromUi;
-
+$("genCode").onclick = generatePairingCodeForSelectedAgent;
+$("unpair").onclick = unpairSelectedAgent;
 // Enter key in pairing code input
 $("pairingCode").addEventListener("keydown", (e) => {
   if (e.key === "Enter") pairAgentFromUi();
