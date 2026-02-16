@@ -1,10 +1,9 @@
 // public/app.js
 const $ = (id) => document.getElementById(id);
-$("genCode").disabled = false;
-$("unpair").disabled = false;
+
 let selectedAgentId = null;
 let jobPollTimer = null;
-let lastAgents = []; // cache of last agent list
+let allAgents = []; // all agents from /portal/agents/all
 
 function setStatus(msg) {
   $("status").textContent = msg;
@@ -15,74 +14,114 @@ async function api(path, opts = {}) {
     headers: { "Content-Type": "application/json" },
     ...opts
   });
-
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`${res.status} ${text}`);
   }
-
-  // some endpoints return json always
   return res.json();
 }
 
-function renderAgents(list) {
+// ---------- Tree rendering ----------
+function groupByTenant(list) {
+  const map = new Map();
+  for (const a of list) {
+    const key = a.tenantId ? a.tenantId : "UNPAIRED";
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(a);
+  }
+  // sort tenants
+  const tenants = Array.from(map.keys()).sort((x, y) => {
+    if (x === "UNPAIRED") return 1;
+    if (y === "UNPAIRED") return -1;
+    return x.localeCompare(y);
+  });
+
+  // sort agents within tenant
+  for (const t of tenants) {
+    map.get(t).sort((a, b) => (a.displayName ?? "").localeCompare(b.displayName ?? ""));
+  }
+
+  return { tenants, map };
+}
+
+function renderTenantTree(list) {
   const root = $("agents");
   root.innerHTML = "";
 
   if (list.length === 0) {
-    root.innerHTML = `<div style="color:#666; font-size:14px;">No agents found for this tenant.</div>`;
+    root.innerHTML = `<div style="color:#666; font-size:14px;">No agents found.</div>`;
     return;
   }
 
-  for (const a of list) {
-    const div = document.createElement("div");
-    div.className = "agent";
-    div.onclick = () => selectAgent(a.agentId);
+  const { tenants, map } = groupByTenant(list);
 
-    const badge = document.createElement("span");
-    badge.className = "badge " + (a.online ? "online" : "offline");
-    badge.textContent = a.online ? "online" : "offline";
+  for (const tenant of tenants) {
+    const agents = map.get(tenant);
+    const section = document.createElement("div");
+    section.style.marginBottom = "12px";
 
-    div.innerHTML = `
-      <div style="display:flex; justify-content:space-between; gap:10px; align-items:center;">
-        <b>${a.displayName}</b>
-        ${badge.outerHTML}
-      </div>
-      <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
-        <span class="badge">${a.siteId ?? "no-site"}</span>
-        <span style="font-size:12px; color:#555;">lastSeen: ${a.lastSeenAt ?? "-"}</span>
-      </div>
-      <div style="font-size:12px; color:#666; margin-top:4px;">${a.agentId}</div>
-    `;
+    const header = document.createElement("div");
+    header.className = "agent";
+    header.style.cursor = "default";
+    header.style.background = "#f9fafc";
+    header.innerHTML = `<b>${tenant}</b> <span style="color:#666; font-size:12px;">(${agents.length})</span>`;
+    section.appendChild(header);
 
-    root.appendChild(div);
+    for (const a of agents) {
+      const div = document.createElement("div");
+      div.className = "agent";
+      div.style.marginLeft = "14px";
+      div.onclick = () => selectAgent(a.agentId);
+
+      const badge = document.createElement("span");
+      badge.className = "badge " + (a.online ? "online" : "offline");
+      badge.textContent = a.online ? "online" : "offline";
+
+      const pairedBadge = document.createElement("span");
+      pairedBadge.className = "badge";
+      pairedBadge.textContent = a.paired ? "paired" : "unpaired";
+
+      div.innerHTML = `
+        <div style="display:flex; justify-content:space-between; gap:10px; align-items:center;">
+          <b>${a.displayName}</b>
+          <div style="display:flex; gap:8px; align-items:center;">
+            ${pairedBadge.outerHTML}
+            ${badge.outerHTML}
+          </div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+          <span class="badge">${a.siteId ?? "no-site"}</span>
+          <span style="font-size:12px; color:#555;">lastSeen: ${a.lastSeenAt ?? "-"}</span>
+        </div>
+        <div style="font-size:12px; color:#666; margin-top:4px;">${a.agentId}</div>
+      `;
+      section.appendChild(div);
+    }
+
+    root.appendChild(section);
   }
 }
 
-async function refreshAgents({ silent = false } = {}) {
-  const tenant = $("tenant").value.trim();
-
+// ---------- Data refresh ----------
+async function refreshAllAgents({ silent = false } = {}) {
   if (!silent) setStatus("loading agents...");
-  const list = await api(`/portal/agents?tenantId=${encodeURIComponent(tenant)}`);
+  const list = await api(`/portal/agents/all`);
+  allAgents = list;
+  renderTenantTree(list);
 
-  lastAgents = list;
-  renderAgents(list);
-
-  // if an agent is currently selected, update UI enable/disable based on online state
+  // update selected agent online state display/buttons
   if (selectedAgentId) {
-    const selected = lastAgents.find(x => x.agentId === selectedAgentId);
-    const online = !!selected?.online;
+    const a = allAgents.find(x => x.agentId === selectedAgentId);
+    const online = !!a?.online;
     $("startJob").disabled = !online;
+    $("genCode").disabled = false;
+    $("unpair").disabled = false;
+
+    $("agentDetails").textContent = `Selected agent: ${selectedAgentId} ${online ? "(online)" : "(offline)"} | tenant: ${a?.tenantId ?? "UNPAIRED"}`;
 
     if (!online) {
-      // show a hint, but don't spam too much
-      if (silent) {
-        $("agentDetails").textContent = `Selected agent: ${selectedAgentId} (offline)`;
-      }
-    } else {
-      if (silent) {
-        $("agentDetails").textContent = `Selected agent: ${selectedAgentId} (online)`;
-      }
+      // keep jobs disabled when offline
+      $("startJob").disabled = true;
     }
   }
 
@@ -90,30 +129,34 @@ async function refreshAgents({ silent = false } = {}) {
   return list;
 }
 
+// ---------- Agent selection + devices ----------
 async function selectAgent(agentId) {
   selectedAgentId = agentId;
 
   $("job").textContent = "";
+  $("pairInfo").textContent = "";
   $("devices").innerHTML = "";
   $("deviceSelect").innerHTML = "";
-  $("startJob").disabled = true; // set after we know online state
 
-  const selected = lastAgents.find(x => x.agentId === agentId);
-  const online = !!selected?.online;
+  const a = allAgents.find(x => x.agentId === agentId);
+  const online = !!a?.online;
 
-  $("agentDetails").textContent = `Selected agent: ${agentId}${online ? " (online)" : " (offline)"}`;
+  $("agentDetails").textContent = `Selected agent: ${agentId} ${online ? "(online)" : "(offline)"} | tenant: ${a?.tenantId ?? "UNPAIRED"}`;
+  $("genCode").disabled = false;
+  $("unpair").disabled = false;
+
   setStatus("loading devices...");
-
   try {
     const devices = await api(`/portal/agents/${agentId}/devices`);
     renderDevices(devices);
 
-    // enable job only if online and have devices
+    // firmware only if online and devices exist
     $("startJob").disabled = !(online && devices.length > 0);
 
     setStatus(`devices: ${devices.length}`);
   } catch (e) {
     setStatus("failed to load devices: " + e.message);
+    $("startJob").disabled = true;
   }
 }
 
@@ -147,12 +190,12 @@ function renderDevices(devices) {
   }
 }
 
+// ---------- Jobs ----------
 async function startFirmwareJob() {
   if (!selectedAgentId) return;
 
-  // block if offline
-  const selected = lastAgents.find(x => x.agentId === selectedAgentId);
-  if (!selected?.online) {
+  const a = allAgents.find(x => x.agentId === selectedAgentId);
+  if (!a?.online) {
     setStatus("agent offline — cannot start job");
     return;
   }
@@ -165,7 +208,6 @@ async function startFirmwareJob() {
   }
 
   setStatus("starting job...");
-
   try {
     const res = await api(`/portal/agents/${selectedAgentId}/jobs/firmware-update`, {
       method: "POST",
@@ -203,6 +245,45 @@ async function pollJob(jobId) {
   await tick();
   jobPollTimer = setInterval(tick, 1000);
 }
+
+// ---------- Pairing (existing) ----------
+async function pairAgentFromUi() {
+  const tenantId = $("tenant").value.trim();
+  const pairingCode = $("pairingCode").value.trim();
+  const displayName = $("pairName").value.trim();
+  const siteId = $("pairSite").value.trim();
+
+  if (!pairingCode) {
+    setStatus("enter pairing code");
+    return;
+  }
+  if (!tenantId) {
+    setStatus("enter tenantId (e.g. hilscher-demo or customer-x)");
+    return;
+  }
+
+  setStatus("pairing...");
+  try {
+    await api(`/portal/agents/pair`, {
+      method: "POST",
+      body: JSON.stringify({
+        pairingCode,
+        tenantId,
+        userId: "achraf",
+        displayName,
+        siteId
+      })
+    });
+
+    setStatus("paired ✅");
+    $("pairingCode").value = "";
+    await refreshAllAgents();
+  } catch (e) {
+    setStatus("pair failed: " + e.message);
+  }
+}
+
+// ---------- Unpair + Generate code ----------
 async function unpairSelectedAgent() {
   if (!selectedAgentId) return;
   setStatus("unpairing...");
@@ -210,14 +291,11 @@ async function unpairSelectedAgent() {
     await api(`/portal/agents/${selectedAgentId}/unpair`, { method: "POST" });
     $("pairInfo").textContent = "";
     setStatus("unpaired ✅");
-    selectedAgentId = null;
-    $("agentDetails").textContent = "Select an agent…";
-    $("devices").innerHTML = "";
-    $("deviceSelect").innerHTML = "";
-    $("startJob").disabled = true;
-    $("genCode").disabled = true;
-    $("unpair").disabled = true;
-    await refreshAgents();
+    // keep selectedAgentId; user might want to generate code immediately
+    await refreshAllAgents();
+    // after refresh, selected agent is still present but under UNPAIRED
+    const a = allAgents.find(x => x.agentId === selectedAgentId);
+    $("agentDetails").textContent = `Selected agent: ${selectedAgentId} | tenant: ${a?.tenantId ?? "UNPAIRED"}`;
   } catch (e) {
     setStatus("unpair failed: " + e.message);
   }
@@ -234,53 +312,22 @@ async function generatePairingCodeForSelectedAgent() {
     setStatus("code gen failed: " + e.message);
   }
 }
-async function pairAgentFromUi() {
-  const tenantId = $("tenant").value.trim();
-  const pairingCode = $("pairingCode").value.trim();
-  const displayName = $("pairName").value.trim();
-  const siteId = $("pairSite").value.trim();
 
-  if (!pairingCode) {
-    setStatus("enter pairing code");
-    return;
-  }
-
-  setStatus("pairing...");
-  try {
-    await api(`/portal/agents/pair`, {
-      method: "POST",
-      body: JSON.stringify({
-        pairingCode,
-        tenantId,
-        userId: "achraf", // later from login/jwt
-        displayName,
-        siteId
-      })
-    });
-
-    setStatus("paired ✅");
-    $("pairingCode").value = "";
-    await refreshAgents();
-  } catch (e) {
-    setStatus("pair failed: " + e.message);
-  }
-}
-
-// Bind UI
-$("refresh").onclick = () => refreshAgents().catch(e => setStatus(String(e)));
+// ---------- Bind UI ----------
+$("refresh").onclick = () => refreshAllAgents().catch(e => setStatus(String(e)));
 $("startJob").onclick = startFirmwareJob;
 $("pairBtn").onclick = pairAgentFromUi;
 $("genCode").onclick = generatePairingCodeForSelectedAgent;
 $("unpair").onclick = unpairSelectedAgent;
-// Enter key in pairing code input
+
 $("pairingCode").addEventListener("keydown", (e) => {
   if (e.key === "Enter") pairAgentFromUi();
 });
 
-// Initial load
-refreshAgents().catch(e => setStatus(String(e)));
+// initial load
+refreshAllAgents().catch(e => setStatus(String(e)));
 
-// Auto refresh (live-ish)
+// auto refresh
 setInterval(() => {
-  refreshAgents({ silent: true }).catch(() => {});
+  refreshAllAgents({ silent: true }).catch(() => {});
 }, 3000);

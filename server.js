@@ -227,6 +227,20 @@ app.post("/portal/agents/pair", (req, res) => {
   res.json({ ok: true, agentId: agent.agentId, status: "paired" });
 });
 
+app.get("/portal/agents/all", (_req, res) => {
+  const list = Array.from(agents.values()).map(a => ({
+    agentId: a.agentId,
+    displayName: a.displayName,
+    siteId: a.siteId,
+    tenantId: a.tenantId,
+    paired: a.paired,
+    online: isOnline(a),
+    lastSeenAt: a.lastSeenAt,
+    agentVersion: a.agentVersion
+  }));
+  res.json(list);
+});
+
 // NEW: Unpair agent (remove tenant ownership)
 app.post("/portal/agents/:agentId/unpair", (req, res) => {
   const { agentId } = req.params;

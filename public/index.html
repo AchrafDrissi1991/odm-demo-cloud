@@ -9,36 +9,43 @@
 <body>
   <header>
     <h1>ODM Demo UI</h1>
+
+    <!-- Pairing form -->
     <div class="row">
       <label>Tenant:</label>
       <input id="tenant" value="hilscher-demo" />
+      <label>Pairing code:</label>
+      <input id="pairingCode" placeholder="XXXX-XXXX" />
+      <label>Name:</label>
+      <input id="pairName" value="Berlin-PC-01" />
+      <label>Site:</label>
+      <input id="pairSite" value="berlin" />
+      <button id="pairBtn">Pair Agent</button>
+
       <button id="refresh">Refresh</button>
       <span id="status"></span>
     </div>
-    <div class="row" style="margin-top:10px;">
-  <label>Pairing code:</label>
-  <input id="pairingCode" placeholder="XXXX-XXXX" />
-  <label>Name:</label>
-  <input id="pairName" value="Berlin-PC-01" />
-  <label>Site:</label>
-  <input id="pairSite" value="berlin" />
-  <button id="pairBtn">Pair Agent</button>
-</div>
   </header>
 
   <main class="grid">
+    <!-- Left: Tenant -> Agents tree -->
     <section class="card">
-      <h2>Agents</h2>
+      <h2>Tenants & Agents</h2>
+      <div style="font-size:12px; color:#666; margin-bottom:8px;">
+        Tree view groups agents by tenant. Unpaired agents appear under <b>UNPAIRED</b>.
+      </div>
       <div id="agents"></div>
     </section>
 
+    <!-- Right: Selected agent -->
     <section class="card">
       <h2>Agent Details</h2>
       <div id="agentDetails">Select an agent…</div>
-      <h3>Devices</h3>
+
+      <h3 style="margin-top:12px;">Devices</h3>
       <div id="devices"></div>
 
-      <h3>Firmware Update</h3>
+      <h3 style="margin-top:12px;">Firmware Update</h3>
       <div class="row">
         <label>Device:</label>
         <select id="deviceSelect"></select>
@@ -48,12 +55,15 @@
         <input id="artifactId" value="fw-netx90-re-1.0.1.bin" />
       </div>
       <button id="startJob" disabled>Start Firmware Update</button>
-      <div class="row" style="margin-top:10px;">
-  <button id="genCode" disabled>Generate new Pairing Code</button>
-  <button id="unpair" disabled>Unpair Agent</button>
-</div>
-<pre id="pairInfo"></pre>
-      <h3>Job Status</h3>
+
+      <h3 style="margin-top:12px;">Management</h3>
+      <div class="row">
+        <button id="genCode" disabled>Generate new Pairing Code</button>
+        <button id="unpair" disabled>Unpair Agent</button>
+      </div>
+      <pre id="pairInfo"></pre>
+
+      <h3 style="margin-top:12px;">Job Status</h3>
       <pre id="job"></pre>
     </section>
   </main>
