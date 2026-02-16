@@ -6,7 +6,11 @@ const app = express();
 app.use(express.json());        // ← wichtig für POST JSON (pairing, jobs etc.)
 app.use("/ui", express.static("public"));
 
-
+const ONLINE_TTL_MS = 15_000; // 15s => wenn 15s kein heartbeat => offline
+function isOnline(agent) {
+  if (!agent?.lastSeenAt) return false;
+  return (Date.now() - Date.parse(agent.lastSeenAt)) < ONLINE_TTL_MS;
+}
 // In-memory storage (Demo)
 const agents = new Map();               // agentId -> agent
 const pairingSessions = new Map();      // pairingCode -> { agentId, expiresAt, usedAt }
@@ -62,9 +66,12 @@ app.post("/agent/pairing/start", (req, res) => {
 app.post("/agent/heartbeat", (req, res) => {
   const { agentId, agentVersion, capabilities } = req.body ?? {};
   if (!agentId || !agents.has(agentId)) return res.status(400).json({ ok: false, error: "UNKNOWN_AGENT" });
-
+const agent = agents.get(agentId);
+if (!isOnline(agent)) {
+  return res.status(409).json({ ok: false, error: "AGENT_OFFLINE" });
+}
   const a = agents.get(agentId);
-  a.online = true;
+  a.online = isOnline(a)
   a.lastSeenAt = nowIso();
   a.agentVersion = agentVersion ?? a.agentVersion;
   a.capabilities = capabilities ?? a.capabilities;
