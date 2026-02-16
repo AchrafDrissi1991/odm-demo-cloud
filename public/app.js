@@ -163,5 +163,9 @@ async function pairAgentFromUi() {
 
 $("refresh").onclick = refreshAgents;
 $("startJob").onclick = startFirmwareJob;
+$("pairBtn").onclick = pairAgentFromUi;   // <-- HINZUFÜGEN
 
+$("pairingCode").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") pairAgentFromUi();
+});
 refreshAgents().catch(e => setStatus(String(e)));
